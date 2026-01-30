@@ -62,7 +62,7 @@ class FLP(LpProblem):
         raise NotImplementedError
     def __str__(self):
         return LpProblem.__str__(self)
-    
+
 class TFN:
     def __init__(self, al, am, au):
         self.al = al
@@ -176,3 +176,61 @@ class FuzzyLinearExp:
         return f"TFN({self.al.value()}, {self.am.value()}, {self.au.value()})"
     def __repr__(self):
         return f"TFN({self.al.value()}, {self.am.value()}, {self.au.value()})"
+    def IS(self, predicate):
+        return self.value().IS(predicate)
+
+class FMLP(FLP):
+    def __init__(self, criteria=[lambda x: x.am, lambda x: x.au, lambda x: x.al], 
+                 L=1e+3, e=1e-4, name="NonName", sense=flpMaximize):
+        FLP.__init__(self, criteria=criteria, L=L, e=e, name=name, sense=sense)
+        self.fuzzy_objectives = []
+    def __iadd__(self, other):
+        if type(other) is list:
+            for exp in other:
+                if type(exp) is FuzzyLinearExp or type(exp) is TFN_Var:
+                    self.fuzzy_objectives.append(exp)
+                else:
+                    self.fuzzy_objectives = []
+                    raise TypeError(f"{exp} must be a FuzzyLinearExp.")
+        else:
+            FLP.__iadd__(self, other)
+        return self
+    
+    def solve(self, solver=None):
+        # Optimize the sum of all objectives by default
+        assert len(self.fuzzy_objectives)>0, "Your must include at least one objective function to use this method."
+        obj = sum(self.fuzzy_objectives, start=TFN(0, 0, 0))
+        self += obj
+        return FLP.solve(self, solver=solver)
+    
+    def epsilon_constraint(self, obj_idx, weights, eps, M=TFN(-100, 0, 100), solver=None):
+        assert len(self.fuzzy_objectives)>0, "Your must include at least one objective function to use this method."
+        indexes = [i for i in range(len(self.fuzzy_objectives)) if i!=obj_idx]
+        s_minus, s_plus = [TFN_Var(f"Sm{i}") for i in indexes], [TFN_Var(f"Sp{i}") for i in indexes]
+        z = TFN_Var("Zobj", unrestricted=True)
+        for var in s_minus + s_plus:
+            self += var
+        s_plus_sum_exp = sum([TFN(weights[i], weights[i], weights[i])*s_plus[i] for i in range(len(indexes))], start=TFN(0,0,0))
+        s_minus_sum_exp = sum([TFN(weights[i], weights[i], weights[i])*s_minus[i] for i in range(len(indexes))], start=TFN(0,0,0))        
+        self += z+s_plus_sum_exp == self.fuzzy_objectives[obj_idx]+s_minus_sum_exp+M
+        for i, idx in enumerate(indexes):
+            if self.sense == flpMinimize:
+                lhs = self.fuzzy_objectives[idx] + s_plus[i]
+                rhs = eps[i] + s_minus[i]
+            else:
+                lhs = self.fuzzy_objectives[idx] + s_minus[i]
+                rhs = eps[i] + s_plus[i]
+            self += lhs == rhs
+            self += s_minus[i] <= s_plus[i]
+        self += z
+        return FLP.solve(self, solver=solver)
+    
+    def weighted_sum(self, weights=[1.0], solver=None):
+        assert len(self.fuzzy_objectives)>0, "Your must include at least one objective function to use this method."
+        if len(self.fuzzy_objectives) > len(weights):
+            weights = weights + [weights[-1]]*(len(self.fuzzy_objectives)-len(weights))
+        obj = TFN(0, 0, 0)
+        for i, exp in enumerate(self.fuzzy_objectives):
+            obj = obj + TFN(weights[i], weights[i], weights[i])*exp
+        self += obj
+        return FLP.solve(self, solver=solver)
