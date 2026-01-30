@@ -1,4 +1,5 @@
-from pylexflp.pylexflp import (FLP, 
+from pylexflp.pylexflp import (FLP,
+                               FMLP,
                                TFN, 
                                TFN_Var, 
                                flpMaximize, 
